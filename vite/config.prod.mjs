@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import cesium from 'vite-plugin-cesium';
 
 const phasermsg = () => {
     return {
@@ -21,6 +22,7 @@ export default defineConfig({
     base: './',
     plugins: [
         react(),
+        cesium(),
         phasermsg()
     ],
     logLevel: 'warning',
@@ -28,7 +30,8 @@ export default defineConfig({
         rollupOptions: {
             output: {
                 manualChunks: {
-                    phaser: ['phaser']
+                    phaser: ['phaser'],
+                    cesium: ['cesium'],
                 }
             }
         },
