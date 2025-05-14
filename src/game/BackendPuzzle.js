@@ -1,8 +1,48 @@
 // src/game/BackendPuzzle.js
-// Model: Handles the logical state and rules of the puzzle grid.
-
 import { ExplodeAndReplacePhase } from './ExplodeAndReplacePhase';
 import { GEM_TYPES } from './constants';
+
+// ***** DEFINE YOUR HABITAT-TO-GEM MAPPING HERE *****
+// This is crucial and depends on your colormap and game design.
+// Example structure: { [minHabitatValue, maxHabitatValue]: gemType }
+// Or a function that takes habitatValue and returns gemType.
+// Note: habitat_colormap.json uses string keys, but values are numbers.
+const HABITAT_GEM_MAP = {
+    // Forests (Example Range - Check your JSON!)
+    100: 'green', 101: 'green', 102: 'green', 103: 'green', 104: 'green',
+    105: 'green', 106: 'green', 107: 'green', 108: 'green', 109: 'green',
+    // Grasslands/Savannas (Example Range)
+    200: 'orange', 201: 'orange', 202: 'orange',
+    // Shrublands/Sparse (Example Range)
+    300: 'black', 301: 'black', 302: 'black', 303: 'black', 304: 'black',
+    305: 'black', 306: 'black', 307: 'black', 308: 'black',
+    // Wetlands/Water-related (Example Range)
+    400: 'blue', 401: 'blue', 402: 'blue', 403: 'blue', 404: 'blue',
+    405: 'blue', 406: 'blue', 407: 'blue',
+    500: 'blue', 501: 'blue', 502: 'blue', 503: 'blue', 504: 'blue',
+    505: 'blue', 506: 'blue', 507: 'blue', 508: 'blue', 509: 'blue',
+    510: 'blue', 511: 'blue', 512: 'blue', 513: 'blue', 514: 'blue',
+    515: 'blue', 516: 'blue', 517: 'blue', 518: 'blue',
+    // Permanent Snow/Ice (Example)
+    900: 'white', 901: 'white',
+    // Water Bodies (Oceans, Lakes) (Example)
+    1000: 'blue', 1001: 'blue', 1002: 'blue', 1003: 'blue', 1004: 'blue',
+    1100: 'blue', 1101: 'blue', 1102: 'blue', 1103: 'blue', 1104: 'blue',
+    1105: 'blue', 1106: 'blue',
+    1200: 'blue', 1206: 'blue', 1207: 'blue',
+    // Developed/Urban/Artificial (Example)
+    1400: 'red', 1401: 'red', 1402: 'red', 1403: 'red', 1404: 'red',
+    1405: 'red', 1406: 'red',
+    // Introduced Vegetation (Example - maybe green or orange?)
+    // 800: 'orange', 801: 'orange', 802: 'orange', 803: 'orange',
+    // Barren (Example - maybe black?)
+    // 600: 'black',
+    // Default/Unknown (e.g., value 0 is water according to JSON, 1700 is NoData/Snow)
+    0: 'blue',
+    1700: 'white', // Treat NoData as maybe snow/ice? Or exclude?
+    // Add any other specific values from your habitat_colormap.json
+};
+
 
 export class BackendPuzzle {
     /** @type {number} */
@@ -12,29 +52,54 @@ export class BackendPuzzle {
     /** @type {string[]} */
     nextGemsToSpawn = [];
     /** @type {Array<Array<{gemType: string} | null>>} */
-    puzzleState; // grid[x][y] -> { gemType: '...' } or null
+    puzzleState;
+    /** @type {number[] | null} */
+    habitatInfluence = null; // <<< NEW: Store habitat values
 
     /**
-     * Initializes the backend puzzle logic.
-     * @param {number} width - Grid width (columns).
-     * @param {number} height - Grid height (rows).
+     * @param {number} width
+     * @param {number} height
      */
     constructor(width, height) {
+        console.log(`>>> BackendPuzzle: Constructor started (width=${width}, height=${height})`); // <<< MODIFIED LOG
         this.width = width;
         this.height = height;
         this.puzzleState = this.getInitialPuzzleStateWithNoMatches(width, height);
+        // <<< MODIFIED LOG - Check if puzzleState is an array and its dimensions >>>
+        console.log(">>> BackendPuzzle: puzzleState initialized:",
+            Array.isArray(this.puzzleState) ? `Array[${this.puzzleState.length}][${this.puzzleState[0]?.length ?? '?'}]` : this.puzzleState
+        );
     }
 
-    // --- Public Methods ---
+    // ***** NEW: Method to set habitat influence *****
+    setHabitatInfluence(habitatValues) {
+        // Ensure it's a valid array and filter out null/undefined if necessary
+        if (Array.isArray(habitatValues)) {
+            const validHabitats = habitatValues.filter(h => typeof h === 'number' && !isNaN(h));
+             if (validHabitats.length > 0) {
+                this.habitatInfluence = validHabitats;
+                // console.log("BackendPuzzle: Habitat influence set:", this.habitatInfluence); // Moved log to end
+             } else {
+                this.habitatInfluence = null; // No valid numeric habitats
+                console.log("BackendPuzzle: Received habitat values, but none were valid numbers.");
+             }
+        } else {
+            this.habitatInfluence = null; // Not an array or null/undefined received
+            console.log("BackendPuzzle: No valid habitat influence received.");
+        }
+        // Log the final result
+        console.log(">>> BackendPuzzle: Habitat influence set:", this.habitatInfluence); // Existing log is good
+    }
 
     /**
      * Returns the current logical state of the puzzle grid.
      * @returns {Array<Array<{gemType: string} | null>>} A copy or reference to the puzzle state.
      */
     getGridState() {
-        // Return a deep copy if external modification is a concern,
-        // otherwise return reference for performance. For this structure,
-        // the Controller reads but doesn't directly modify, so reference is okay.
+        // <<< MODIFIED LOG - Check return value type/dims >>>
+        console.log(">>> BackendPuzzle: getGridState called. Returning:",
+            Array.isArray(this.puzzleState) ? `Array[${this.puzzleState.length}][${this.puzzleState[0]?.length ?? '?'}]` : this.puzzleState
+        );
         return this.puzzleState;
     }
 
@@ -45,6 +110,7 @@ export class BackendPuzzle {
      * @returns {Array<Array<{gemType: string} | null>>}
      */
     getInitialPuzzleStateWithNoMatches(width, height) {
+        console.log(">>> BackendPuzzle: getInitialPuzzleStateWithNoMatches called."); // <<< ADD LOG
         let grid = [];
 
         for (let x = 0; x < width; x++) {
@@ -76,6 +142,7 @@ export class BackendPuzzle {
                 grid[x][y] = { gemType: gemType };
             }
         }
+        console.log(">>> BackendPuzzle: getInitialPuzzleStateWithNoMatches finished creating grid."); // <<< ADD LOG
         return grid;
     }
 
@@ -157,13 +224,35 @@ export class BackendPuzzle {
         return this.getMatches(hypotheticalState);
     }
 
-    /** Returns the type of the next gem to spawn, from queue or randomly. */
+    /** Returns the type of the next gem to spawn, influenced by habitats or randomly. */
     getNextGemToSpawnType() {
+        // 1. Check manual spawn queue first
         if (this.nextGemsToSpawn.length > 0) {
             return this.nextGemsToSpawn.shift();
         }
-        return GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)];
+
+        // 2. Check habitat influence
+        if (this.habitatInfluence && this.habitatInfluence.length > 0) {
+            // Pick one habitat value randomly from the available ones
+            const habitatValue = this.habitatInfluence[Math.floor(Math.random() * this.habitatInfluence.length)];
+
+            // Use the defined map
+            const mappedGemType = HABITAT_GEM_MAP[habitatValue];
+
+            if (mappedGemType && GEM_TYPES.includes(mappedGemType)) {
+                // console.log(`Spawning gem type '${mappedGemType}' based on habitat ${habitatValue}`);
+                return mappedGemType;
+            } else {
+                // Fallback if habitat value not in map or maps to invalid type
+                console.warn(`Habitat value ${habitatValue} not specifically mapped or invalid, using random default.`);
+                return GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)];
+            }
+        } else {
+            // 3. Fallback to purely random if no influence
+            return GEM_TYPES[Math.floor(Math.random() * GEM_TYPES.length)];
+        }
     }
+
 
     /** Adds a specific gem type to the spawn queue. */
     addNextGemToSpawn(gemType) {
@@ -179,6 +268,7 @@ export class BackendPuzzle {
     reset() {
         this.puzzleState = this.getInitialPuzzleStateWithNoMatches(this.width, this.height);
         this.nextGemsToSpawn = [];
+        this.habitatInfluence = null; // <<< Reset habitat influence
         console.log("BackendPuzzle reset.");
     }
 

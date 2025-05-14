@@ -46,28 +46,44 @@ export class BoardView {
     /** Creates the initial sprites based on the model state. */
     createBoard(initialPuzzleState) {
         console.log("BoardView: Creating board visuals...");
+        // <<< ADD LOG HERE to inspect the incoming argument >>>
+        console.log(">>> BoardView: Received initialPuzzleState:",
+             initialPuzzleState === null ? 'null' :
+             initialPuzzleState === undefined ? 'undefined' :
+             Array.isArray(initialPuzzleState) ? `Array[${initialPuzzleState.length}][${initialPuzzleState[0]?.length ?? '?'}]` :
+             typeof initialPuzzleState // Log type if not array/null/undefined
+         );
+
         this.destroyBoard(); // Clear any previous board
         this.gemsSprites = [];
 
-        if (!initialPuzzleState) {
-             console.error("BoardView: Cannot create board without initial puzzle state.");
-             return;
+        if (!initialPuzzleState || !Array.isArray(initialPuzzleState) || initialPuzzleState.length !== this.gridCols) { // <<< MODIFIED CHECK: More robust
+             console.error(`BoardView: Cannot create board. Invalid initialPuzzleState received (null, undefined, not array, or wrong width). Expected ${this.gridCols} columns. Exiting createBoard.`);
+             return; // <<< It exits here if state is invalid
         }
+
+        console.log("BoardView: Board visuals creation continuing..."); // Add log to see if it gets past the check
 
         for (let x = 0; x < this.gridCols; x++) {
             this.gemsSprites[x] = new Array(this.gridRows).fill(null);
-             if (!initialPuzzleState[x]) {
-                 console.error(`BoardView: Initial puzzle state missing column ${x}.`);
-                 continue;
+             // Check if the column itself is a valid array and has the correct length
+             if (!Array.isArray(initialPuzzleState[x]) || initialPuzzleState[x].length !== this.gridRows) {
+                 console.error(`BoardView: Initial puzzle state column ${x} is invalid or has wrong height. Expected ${this.gridRows} rows.`);
+                 // Decide how to handle this - skip column, fill with null, error out?
+                 // For now, we'll just have nulls in this.gemsSprites[x]
+                 continue; // Skip to the next column
              }
             for (let y = 0; y < this.gridRows; y++) {
                 const gemData = initialPuzzleState[x][y];
                 if (gemData && gemData.gemType) {
                     this.createSprite(x, y, gemData.gemType);
+                } else {
+                    // Optional: Log if a cell is unexpectedly null in the initial state
+                    // console.log(`BoardView: No initial gem data at [${x}, ${y}]`);
                 }
             }
         }
-        console.log("BoardView: Board visuals created.");
+        console.log("BoardView: Board visuals created successfully."); // Modified log
     }
 
     /** Updates sprite positions and scales after resize/orientation change. */
@@ -87,7 +103,7 @@ export class BoardView {
                 y: targetPos.y,
                 scale: newScale,
                 duration: TWEEN_DURATION_LAYOUT_UPDATE,
-                ease: 'Linear' // 'Sine.easeInOut' is smoother
+                ease: 'Sine.easeInOut' // Smoother ease
             });
         });
     }
@@ -205,6 +221,9 @@ export class BoardView {
                             }
                         });
                     }));
+                } else {
+                    // This might happen if a cascade explodes something already animating explosion
+                    // console.warn(`BoardView: Explosion requested for non-existent sprite at [${x}, ${y}]`);
                 }
             });
 
@@ -426,13 +445,19 @@ export class BoardView {
         }
 
         // Store reference in the grid array (ensure column exists)
-        if (this.gemsSprites[gridX]) {
-            this.gemsSprites[gridX][gridY] = sprite;
+        if (!this.gemsSprites[gridX]) {
+             console.warn(`BoardView: gemsSprites column ${gridX} was not initialized before createSprite. Initializing now.`);
+             this.gemsSprites[gridX] = new Array(this.gridRows).fill(null);
+        }
+        // Only assign if the slot is within bounds (safety check)
+        if(gridY >= 0 && gridY < this.gridRows) {
+             this.gemsSprites[gridX][gridY] = sprite;
         } else {
-             console.error(`Column ${gridX} not initialized before creating sprite.`);
-             this.safelyDestroySprite(sprite);
+             console.error(`BoardView Error: Attempted to assign sprite to invalid row ${gridY} in column ${gridX}.`);
+             this.safelyDestroySprite(sprite); // Clean up the created sprite
              return null;
         }
+
         return sprite;
     }
 
@@ -472,5 +497,31 @@ export class BoardView {
                 }
             }
         }
+    }
+
+    /** Utility to sync sprite visual positions to their stored logical grid coords. */
+    syncSpritesToGridPositions() {
+         console.warn("BoardView: Attempting to sync sprites to logical grid positions.");
+         this.iterateSprites((sprite, x, y) => {
+              const logicalX = sprite.getData('gridX');
+              const logicalY = sprite.getData('gridY');
+              // Basic check: does the sprite's stored logical position match its array position?
+              if (logicalX !== x || logicalY !== y) {
+                   console.warn(`Sync Mismatch: Sprite at array pos [${x},${y}] has logical pos [${logicalX},${logicalY}]`);
+                   // Optionally force visual snap based on stored logical position
+                   // const targetPos = this.getSpritePosition(logicalX, logicalY);
+                   // sprite.setPosition(targetPos.x, targetPos.y);
+              } else {
+                   // Ensure visual position matches array position
+                   const targetPos = this.getSpritePosition(x, y);
+                   if(Math.round(sprite.x) !== targetPos.x || Math.round(sprite.y) !== targetPos.y) {
+                       console.warn(`Sync Visual Correction: Snapping sprite at [${x},${y}] to correct visual position.`);
+                       this.scene.tweens.killTweensOf(sprite);
+                       sprite.setPosition(targetPos.x, targetPos.y);
+                   }
+              }
+              sprite.setScale(this.calculateSpriteScale(sprite));
+              sprite.setAlpha(1); // Ensure visible
+         });
     }
 }
